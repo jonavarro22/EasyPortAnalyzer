@@ -10,7 +10,8 @@ namespace EasyPortAnalyzer
 
             try
             {
-                Console.WriteLine("Welcome to the Port Scanner!");
+                Console.WriteLine("Welcome to the Easy Port Analyzer!");
+                Console.WriteLine("Created by Joaquin Navarro for joaquinlab.com");
                 Console.Write("Enter target IP or hostname: ");
                 string target = Console.ReadLine();
 
