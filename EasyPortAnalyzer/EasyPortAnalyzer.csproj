@@ -10,6 +10,7 @@
     <RepositoryUrl>https://github.com/jonavarro22/EasyPortAnalyzer</RepositoryUrl>
     <Company>JoaquinLab</Company>
     <Authors>Joaquin Navarro</Authors>
+    <Version>1.2</Version>
   </PropertyGroup>
 
   <ItemGroup>

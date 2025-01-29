@@ -6,6 +6,7 @@ namespace EasyPortAnalyzer
     {
         static async Task Main(string[] args)
         {
+            // Handle unhandled exceptions
             AppDomain.CurrentDomain.UnhandledException += UnhandledExceptionTrapper;
 
             try
@@ -17,38 +18,69 @@ namespace EasyPortAnalyzer
 
                 int startPort = 0, endPort = 0;
                 List<int> specificPorts = null;
-                int choice = DisplayMenu();
 
-                switch (choice)
+                // Check if ports file exists and offer to read ports from it
+                if (File.Exists("Ports.txt") || File.Exists("Ports.csv"))
                 {
-                    case 1:
-                        startPort = 0;
-                        endPort = 1023;
-                        break;
-                    case 2:
-                        startPort = 1024;
-                        endPort = 49151;
-                        break;
-                    case 3:
-                        startPort = 49152;
-                        endPort = 65535;
-                        break;
-                    case 4:
-                        Console.Write("Enter starting port: ");
-                        startPort = int.Parse(Console.ReadLine() ?? "0");
+                    Console.WriteLine("A ports file (Ports.txt or Ports.csv) is available.");
+                    Console.Write("Do you want to read ports from the file? (y/n): ");
+                    if (Console.ReadLine()?.Trim().ToLower() == "y")
+                    {
+                        specificPorts = ReadPortsFromFile();
+                    }
+                }
 
-                        Console.Write("Enter ending port: ");
-                        endPort = int.Parse(Console.ReadLine() ?? "0");
-                        break;
-                    case 5:
-                        Console.Write("Enter specific ports (comma-separated): ");
-                        specificPorts = Console.ReadLine()?.Split(',').Select(int.Parse).ToList();
-                        break;
-                    default:
-                        Console.WriteLine("Invalid choice. Defaulting to Well-Known Ports.");
-                        startPort = 0;
-                        endPort = 1023;
-                        break;
+                // If no specific ports were read from the file, display the menu
+                if (specificPorts == null)
+                {
+                    int choice = DisplayMenu();
+
+                    switch (choice)
+                    {
+                        case 1:
+                            startPort = 0;
+                            endPort = 1023;
+                            break;
+                        case 2:
+                            startPort = 1024;
+                            endPort = 49151;
+                            break;
+                        case 3:
+                            startPort = 49152;
+                            endPort = 65535;
+                            break;
+                        case 4:
+                            Console.Write("Enter starting port: ");
+                            startPort = int.Parse(Console.ReadLine() ?? "0");
+
+                            Console.Write("Enter ending port: ");
+                            endPort = int.Parse(Console.ReadLine() ?? "0");
+                            break;
+                        case 5:
+                            Console.Write("Enter specific ports (comma-separated): ");
+                            specificPorts = Console.ReadLine()?.Split(',').Select(int.Parse).ToList();
+                            SavePortsToFile(specificPorts); // Save specific ports to file
+                            break;
+                        case 6:
+                            Console.WriteLine("Warning: Scanning all ports (0-65535) might take a long time.");
+                            Console.Write("Do you want to proceed? (y/n): ");
+                            if (Console.ReadLine()?.Trim().ToLower() == "y")
+                            {
+                                startPort = 0;
+                                endPort = 65535;
+                            }
+                            else
+                            {
+                                Console.WriteLine("Operation cancelled.");
+                                return;
+                            }
+                            break;
+                        default:
+                            Console.WriteLine("Invalid choice. Defaulting to Well-Known Ports.");
+                            startPort = 0;
+                            endPort = 1023;
+                            break;
+                    }
                 }
 
                 Console.WriteLine("\nScanning ports...");
@@ -64,8 +96,6 @@ namespace EasyPortAnalyzer
 
                 Console.WriteLine("\nScan complete!");
                 PrintResults(results, target);
-
-
             }
             catch (Exception ex)
             {
@@ -73,15 +103,40 @@ namespace EasyPortAnalyzer
             }
         }
 
+        // Read ports from file
+        static List<int> ReadPortsFromFile()
+        {
+            string filePath = File.Exists("Ports.txt") ? "Ports.txt" : "Ports.csv";
+            string fileContent = File.ReadAllText(filePath);
+            return fileContent.Split(new[] { ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                              .Select(int.Parse)
+                              .ToList();
+        }
+
+        // Save ports to file
+        static void SavePortsToFile(List<int> ports)
+        {
+            try
+            {
+                File.WriteAllText("Ports.txt", string.Join(",", ports));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to save ports to file: {ex.Message}");
+            }
+        }
+
+        // Display menu and get user choice
         static int DisplayMenu()
         {
             string[] options = {
-                    "Well-Known Ports (0–1023)",
-                    "Registered Ports (1024–49151)",
-                    "Dynamic/Private Ports (49152–65535)",
-                    "Custom Range",
-                    "Specific Ports"
-                };
+                                        "Well-Known Ports (0–1023)",
+                                        "Registered Ports (1024–49151)",
+                                        "Dynamic/Private Ports (49152–65535)",
+                                        "Custom Range",
+                                        "Specific Ports",
+                                        "All Ports (0-65535)"
+                                    };
 
             int selectedIndex = 0;
 
@@ -119,6 +174,7 @@ namespace EasyPortAnalyzer
             return selectedIndex + 1;
         }
 
+        // Print scan results
         static void PrintResults(List<PortScanResult> results, string ip)
         {
             int currentLine = 0;
@@ -207,6 +263,7 @@ namespace EasyPortAnalyzer
             }
         }
 
+        // Print individual result
         static void PrintResult(PortScanResult result)
         {
             Console.Write($"{result.Port}\t");
@@ -218,6 +275,7 @@ namespace EasyPortAnalyzer
             Console.ResetColor();
         }
 
+        // Print table header
         static void PrintTableHeader(string ip)
         {
             Console.WriteLine();
@@ -226,26 +284,38 @@ namespace EasyPortAnalyzer
             Console.WriteLine("------------------------------------------------------------------------");
         }
 
+        // Export results to CSV file
         static void ExportResultsToCsv(List<PortScanResult> results, string ip)
         {
-            string fileName = $"PortsTo{ip.Replace('.', '-')}.csv";
-            string directory = Directory.GetCurrentDirectory();
-            string fullPath = Path.Combine(directory, fileName);
-
-            using (var writer = new StreamWriter(fullPath))
+            try
             {
-                writer.WriteLine("Port,TCP,UDP");
-                foreach (var result in results)
+                string fileName = $"PortsTo{ip.Replace('.', '-')}.csv";
+                string directory = Directory.GetCurrentDirectory();
+                string fullPath = Path.Combine(directory, fileName);
+
+                using (var writer = new StreamWriter(fullPath))
                 {
-                    writer.WriteLine($"{result.Port},{(result.IsTcpOpen ? "Open" : "Closed")},{(result.IsUdpOpen ? "Open" : "Closed")}");
+                    writer.WriteLine("Port,TCP,UDP");
+                    foreach (var result in results)
+                    {
+                        writer.WriteLine($"{result.Port},{(result.IsTcpOpen ? "Open" : "Closed")},{(result.IsUdpOpen ? "Open" : "Closed")}");
+                    }
                 }
+                Console.Clear();
+                Console.WriteLine($"\nResults exported to {fullPath}");
             }
-            Console.Clear();
-            Console.WriteLine($"\nResults exported to {fullPath}");
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadKey(true); // Wait for the user to press any key
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to export results to CSV: {ex.Message}");
+            }
+            finally
+            {
+                Console.WriteLine("Press any key to continue...");
+                Console.ReadKey(true); // Wait for the user to press any key
+            }
         }
 
+        // Handle unhandled exceptions
         static void UnhandledExceptionTrapper(object sender, UnhandledExceptionEventArgs e)
         {
             Console.WriteLine($"An unhandled exception occurred: {((Exception)e.ExceptionObject).Message}");
