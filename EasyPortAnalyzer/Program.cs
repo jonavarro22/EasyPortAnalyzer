@@ -4,6 +4,8 @@ namespace EasyPortAnalyzer
 {
     class Program
     {
+        static bool keepRunning = true;
+
         static async Task Main(string[] args)
         {
             // Handle unhandled exceptions
@@ -13,89 +15,95 @@ namespace EasyPortAnalyzer
             {
                 Console.WriteLine("Welcome to the Easy Port Analyzer!");
                 Console.WriteLine("Created by Joaquin Navarro for joaquinlab.com");
-                Console.Write("Enter target IP or hostname: ");
-                string target = Console.ReadLine();
+                Console.WriteLine("Press Ctrl+C to exit at any time.\n");
 
-                int startPort = 0, endPort = 0;
-                List<int> specificPorts = null;
-
-                // Check if ports file exists and offer to read ports from it
-                if (File.Exists("Ports.txt") || File.Exists("Ports.csv"))
+                while (keepRunning)
                 {
-                    Console.WriteLine("A ports file (Ports.txt or Ports.csv) is available.");
-                    Console.Write("Do you want to read ports from the file? (y/n): ");
-                    if (Console.ReadLine()?.Trim().ToLower() == "y")
+                    keepRunning = true;                  
+                    Console.Write("Enter target IP or hostname: ");
+                    string target = Console.ReadLine();
+
+                    int startPort = 0, endPort = 0;
+                    List<int> specificPorts = null;
+
+                    // Check if ports file exists and offer to read ports from it
+                    if (File.Exists("Ports.txt") || File.Exists("Ports.csv"))
                     {
-                        specificPorts = ReadPortsFromFile();
+                        Console.WriteLine("A ports file (Ports.txt or Ports.csv) is available.");
+                        Console.Write("Do you want to read ports from the file? (y/n): ");
+                        if (Console.ReadLine()?.Trim().ToLower() == "y")
+                        {
+                            specificPorts = ReadPortsFromFile();
+                        }
                     }
-                }
 
-                // If no specific ports were read from the file, display the menu
-                if (specificPorts == null)
-                {
-                    int choice = DisplayMenu();
-
-                    switch (choice)
+                    // If no specific ports were read from the file, display the menu
+                    if (specificPorts == null)
                     {
-                        case 1:
-                            startPort = 0;
-                            endPort = 1023;
-                            break;
-                        case 2:
-                            startPort = 1024;
-                            endPort = 49151;
-                            break;
-                        case 3:
-                            startPort = 49152;
-                            endPort = 65535;
-                            break;
-                        case 4:
-                            Console.Write("Enter starting port: ");
-                            startPort = int.Parse(Console.ReadLine() ?? "0");
+                        int choice = DisplayMenu();
 
-                            Console.Write("Enter ending port: ");
-                            endPort = int.Parse(Console.ReadLine() ?? "0");
-                            break;
-                        case 5:
-                            Console.Write("Enter specific ports (comma-separated): ");
-                            specificPorts = Console.ReadLine()?.Split(',').Select(int.Parse).ToList();
-                            SavePortsToFile(specificPorts); // Save specific ports to file
-                            break;
-                        case 6:
-                            Console.WriteLine("Warning: Scanning all ports (0-65535) might take a long time.");
-                            Console.Write("Do you want to proceed? (y/n): ");
-                            if (Console.ReadLine()?.Trim().ToLower() == "y")
-                            {
+                        switch (choice)
+                        {
+                            case 1:
                                 startPort = 0;
+                                endPort = 1023;
+                                break;
+                            case 2:
+                                startPort = 1024;
+                                endPort = 49151;
+                                break;
+                            case 3:
+                                startPort = 49152;
                                 endPort = 65535;
-                            }
-                            else
-                            {
-                                Console.WriteLine("Operation cancelled.");
-                                return;
-                            }
-                            break;
-                        default:
-                            Console.WriteLine("Invalid choice. Defaulting to Well-Known Ports.");
-                            startPort = 0;
-                            endPort = 1023;
-                            break;
+                                break;
+                            case 4:
+                                Console.Write("Enter starting port: ");
+                                startPort = int.Parse(Console.ReadLine() ?? "0");
+
+                                Console.Write("Enter ending port: ");
+                                endPort = int.Parse(Console.ReadLine() ?? "0");
+                                break;
+                            case 5:
+                                Console.Write("Enter specific ports (comma-separated): ");
+                                specificPorts = Console.ReadLine()?.Split(',').Select(int.Parse).ToList();
+                                SavePortsToFile(specificPorts); // Save specific ports to file
+                                break;
+                            case 6:
+                                Console.WriteLine("Warning: Scanning all ports (0-65535) might take a long time.");
+                                Console.Write("Do you want to proceed? (y/n): ");
+                                if (Console.ReadLine()?.Trim().ToLower() == "y")
+                                {
+                                    startPort = 0;
+                                    endPort = 65535;
+                                }
+                                else
+                                {
+                                    Console.WriteLine("Operation cancelled.");
+                                    return;
+                                }
+                                break;
+                            default:
+                                Console.WriteLine("Invalid choice. Defaulting to Well-Known Ports.");
+                                startPort = 0;
+                                endPort = 1023;
+                                break;
+                        }
                     }
-                }
 
-                Console.WriteLine("\nScanning ports...");
-                List<PortScanResult> results;
-                if (specificPorts != null)
-                {
-                    results = await PortScanner.ScanSpecificPortsAsync(target, specificPorts);
-                }
-                else
-                {
-                    results = await PortScanner.ScanAsync(target, startPort, endPort);
-                }
+                    Console.WriteLine("\nScanning ports...");
+                    List<PortScanResult> results;
+                    if (specificPorts != null)
+                    {
+                        results = await PortScanner.ScanSpecificPortsAsync(target, specificPorts);
+                    }
+                    else
+                    {
+                        results = await PortScanner.ScanAsync(target, startPort, endPort);
+                    }
 
-                Console.WriteLine("\nScan complete!");
-                PrintResults(results, target);
+                    Console.WriteLine("\nScan complete!");
+                    PrintResults(results, target);
+                }
             }
             catch (Exception ex)
             {
@@ -228,7 +236,7 @@ namespace EasyPortAnalyzer
                     }
                 }
 
-                Console.WriteLine("\nUse Up/Down arrows to scroll line by line, Left/Right arrows to scroll page by page, Space to toggle view, Esc to exit.");
+                Console.WriteLine("\nUse Up/Down arrows to scroll line by line, Left/Right arrows to scroll page by page, Space to toggle view, Enter to go back to the menu, Esc to exit.");
 
                 var key = Console.ReadKey(true).Key;
                 if (key == ConsoleKey.DownArrow && currentLine + pageSize < filteredResults.Count)
@@ -252,8 +260,14 @@ namespace EasyPortAnalyzer
                     showAll = !showAll;
                     currentLine = 0; // Reset to the top of the list
                 }
+                else if (key == ConsoleKey.Enter)
+                {
+                    Console.Clear();
+                    break;
+                }
                 else if (key == ConsoleKey.Escape)
                 {
+                    keepRunning = false;
                     break;
                 }
                 else if (key == ConsoleKey.S)
