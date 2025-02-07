@@ -1,10 +1,12 @@
 ﻿using System;
+using System.Net;
 
 namespace EasyPortAnalyzer
 {
     class Program
     {
         static bool keepRunning = true;
+        static string lastUsedIp = string.Empty;
 
         static async Task Main(string[] args)
         {
@@ -19,9 +21,9 @@ namespace EasyPortAnalyzer
 
                 while (keepRunning)
                 {
-                    keepRunning = true;                  
-                    Console.Write("Enter target IP or hostname: ");
-                    string target = Console.ReadLine();
+                    keepRunning = true;
+
+                    string target = GetTargetIp();
 
                     int startPort = 0, endPort = 0;
                     List<int> specificPorts = null;
@@ -111,6 +113,22 @@ namespace EasyPortAnalyzer
             }
         }
 
+        static string GetTargetIp()
+        {
+            if (!string.IsNullOrEmpty(lastUsedIp))
+            {
+                Console.Write($"Use the last used IP ({lastUsedIp})? (y/n): ");
+                if (Console.ReadLine()?.Trim().ToLower() == "y")
+                {
+                    return lastUsedIp;
+                }
+            }
+
+            Console.Write("Enter target IP or hostname: ");
+            lastUsedIp = Console.ReadLine();
+            return lastUsedIp;
+        }
+
         // Read ports from file
         static List<int> ReadPortsFromFile()
         {
@@ -138,13 +156,13 @@ namespace EasyPortAnalyzer
         static int DisplayMenu()
         {
             string[] options = {
-                                        "Well-Known Ports (0–1023)",
-                                        "Registered Ports (1024–49151)",
-                                        "Dynamic/Private Ports (49152–65535)",
-                                        "Custom Range",
-                                        "Specific Ports",
-                                        "All Ports (0-65535)"
-                                    };
+                                            "Well-Known Ports (0–1023)",
+                                            "Registered Ports (1024–49151)",
+                                            "Dynamic/Private Ports (49152–65535)",
+                                            "Custom Range",
+                                            "Specific Ports",
+                                            "All Ports (0-65535)"
+                                        };
 
             int selectedIndex = 0;
 
@@ -269,6 +287,58 @@ namespace EasyPortAnalyzer
                 {
                     keepRunning = false;
                     break;
+                    static string GetTargetIp()
+                    {
+                        while (true)
+                        {
+                            if (!string.IsNullOrEmpty(lastUsedIp))
+                            {
+                                Console.Write($"Use the last used IP ({lastUsedIp})? (y/n): ");
+                                if (Console.ReadLine()?.Trim().ToLower() == "y")
+                                {
+                                    return lastUsedIp;
+                                }
+                            }
+
+                            Console.Write("Enter target IP or hostname: ");
+                            string input = Console.ReadLine();
+
+                            if (IsValidIpOrHostname(input))
+                            {
+                                lastUsedIp = input;
+                                return lastUsedIp;
+                            }
+                            else
+                            {
+                                Console.WriteLine("Invalid IP address or hostname. Please try again.");
+                            }
+                        }
+                    }
+
+                    static bool IsValidIpOrHostname(string input)
+                    {
+                        if (string.IsNullOrWhiteSpace(input))
+                        {
+                            return false;
+                        }
+
+                        // Check if input is a valid IP address
+                        if (IPAddress.TryParse(input, out _))
+                        {
+                            return true;
+                        }
+
+                        // Check if input is a valid hostname
+                        try
+                        {
+                            var hostEntry = Dns.GetHostEntry(input);
+                            return hostEntry != null;
+                        }
+                        catch
+                        {
+                            return false;
+                        }
+                    }
                 }
                 else if (key == ConsoleKey.S)
                 {
