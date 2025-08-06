@@ -1,5 +1,4 @@
-﻿using System;
-using System.Net;
+﻿using System.Net;
 
 namespace EasyPortAnalyzer
 {
@@ -78,7 +77,7 @@ namespace EasyPortAnalyzer
                                 else
                                 {
                                     Console.WriteLine("Operation cancelled.");
-                                    return;
+                                    continue; // Return to the beginning of the loop instead of exiting
                                 }
                                 break;
                             default:
@@ -100,8 +99,26 @@ namespace EasyPortAnalyzer
                         results = await PortScanner.ScanAsync(target, startPort, endPort);
                     }
 
-                    Console.WriteLine("\nScan complete!");
                     PrintResults(results, target);
+
+                    if (keepRunning) // Only ask if user didn't press Escape
+                    {
+                        int option = DisplayScanOptionsMenu();
+
+                        switch (option)
+                        {
+                            case 1:
+                                // Continue with same IP (it's already stored in lastUsedIp)
+                                break;
+                            case 2:
+                                // Force new IP input by clearing lastUsedIp
+                                lastUsedIp = string.Empty;
+                                break;
+                            case 3:
+                                keepRunning = false;
+                                break;
+                        }
+                    }
                 }
             }
             catch (Exception ex)
@@ -110,17 +127,61 @@ namespace EasyPortAnalyzer
             }
         }
 
+        // New method for scan options menu with arrow key selection
+        static int DisplayScanOptionsMenu()
+        {
+            string[] options = {
+                "Scan again with same IP",
+                "Scan a different IP",
+                "Exit"
+            };
+
+            int selectedIndex = 0;
+
+            ConsoleKey key;
+            do
+            {
+                Console.Clear();
+                Console.WriteLine("Scan options:");
+
+                for (int i = 0; i < options.Length; i++)
+                {
+                    if (i == selectedIndex)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"> {options[i]}");
+                        Console.ResetColor();
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  {options[i]}");
+                    }
+                }
+
+                key = Console.ReadKey(true).Key;
+
+                if (key == ConsoleKey.UpArrow)
+                {
+                    selectedIndex = (selectedIndex == 0) ? options.Length - 1 : selectedIndex - 1;
+                }
+                else if (key == ConsoleKey.DownArrow)
+                {
+                    selectedIndex = (selectedIndex == options.Length - 1) ? 0 : selectedIndex + 1;
+                }
+            } while (key != ConsoleKey.Enter);
+
+            return selectedIndex + 1;
+        }
+
         static string GetTargetIp()
         {
             while (true)
             {
                 if (!string.IsNullOrEmpty(lastUsedIp))
                 {
-                    Console.Write($"Use the last used IP ({lastUsedIp})? (y/n): ");
-                    if (Console.ReadLine()?.Trim().ToLower() == "y")
-                    {
-                        return lastUsedIp;
-                    }
+                    
+                    return lastUsedIp;
+                    
                 }
 
                 Console.Write("Enter target IP or hostname: ");
@@ -206,13 +267,13 @@ namespace EasyPortAnalyzer
         static int DisplayMenu()
         {
             string[] options = {
-                                                "Well-Known Ports (0–1023)",
-                                                "Registered Ports (1024–49151)",
-                                                "Dynamic/Private Ports (49152–65535)",
-                                                "Custom Range",
-                                                "Specific Ports",
-                                                "All Ports (0-65535)"
-                                            };
+                                "Well-Known Ports (0–1023)",
+                                "Registered Ports (1024–49151)",
+                                "Dynamic/Private Ports (49152–65535)",
+                                "Custom Range",
+                                "Specific Ports",
+                                "All Ports (0-65535)"
+                            };
 
             int selectedIndex = 0;
 
@@ -250,16 +311,23 @@ namespace EasyPortAnalyzer
             return selectedIndex + 1;
         }
 
-        // Print scan results
+        // Print scan results with smart display toggle
         static void PrintResults(List<PortScanResult> results, string ip)
         {
             int currentLine = 0;
-            int pageSize = (Console.WindowHeight - 6); // Number of lines that can be displayed at once per column
-            bool showAll = false;
+            int pageSize = (Console.WindowHeight - 8); // Number of lines that can be displayed at once per column
+            int totalVisibleResults = pageSize * 3; // Total results visible in all three columns
+
+            // Smart toggle - show all results by default unless there are too many to display on one screen
+            bool showAll = results.Count <= totalVisibleResults;
 
             while (true)
             {
-                Console.Clear();
+                Console.Clear(); // Clear the screen first
+                string viewMode = showAll ? "all ports" : "open ports only";
+                Console.WriteLine($"\nCurrently showing: {viewMode}");
+                Console.WriteLine("Use Up/Down arrows to scroll line by line, Left/Right arrows to scroll page by page");
+                Console.WriteLine("Space to toggle view, Enter to go back to the menu, Esc to exit, S to save results");
                 PrintTableHeader(ip);
 
                 var filteredResults = showAll ? results : results.FindAll(r => r.IsTcpOpen || r.IsUdpOpen);
@@ -303,8 +371,6 @@ namespace EasyPortAnalyzer
                         Console.WriteLine();
                     }
                 }
-
-                Console.WriteLine("\nUse Up/Down arrows to scroll line by line, Left/Right arrows to scroll page by page, Space to toggle view, Enter to go back to the menu, Esc to exit.");
 
                 var key = Console.ReadKey(true).Key;
                 if (key == ConsoleKey.DownArrow && currentLine + pageSize < filteredResults.Count)
