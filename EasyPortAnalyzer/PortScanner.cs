@@ -10,10 +10,14 @@ namespace EasyPortAnalyzer
         public int Port { get; set; }
         public bool IsTcpOpen { get; set; }
         public bool IsUdpOpen { get; set; }
+        public bool TcpFiltered { get; set; }
+        public bool UdpFiltered { get; set; }
     }
 
     public static class PortScanner
     {
+        private enum PortState { Open, Closed, Filtered }
+
         public static async Task<List<PortScanResult>> ScanAsync(string target, int startPort, int endPort)
         {
             var results = new List<PortScanResult>();
@@ -24,14 +28,16 @@ namespace EasyPortAnalyzer
                 int currentPort = port;
                 tasks[currentPort - startPort] = Task.Run(async () =>
                 {
-                    bool isTcpOpen = await IsTcpPortOpenAsync(target, currentPort);
-                    bool isUdpOpen = await IsUdpPortOpenAsync(target, currentPort);
+                    var tcpState = await GetTcpStateAsync(target, currentPort);
+                    var udpState = await GetUdpStateAsync(target, currentPort);
 
                     return new PortScanResult
                     {
                         Port = currentPort,
-                        IsTcpOpen = isTcpOpen,
-                        IsUdpOpen = isUdpOpen
+                        IsTcpOpen = tcpState == PortState.Open,
+                        TcpFiltered = tcpState == PortState.Filtered,
+                        IsUdpOpen = udpState == PortState.Open,
+                        UdpFiltered = udpState == PortState.Filtered
                     };
                 });
             }
@@ -52,14 +58,16 @@ namespace EasyPortAnalyzer
                 int currentPort = ports[i];
                 tasks[i] = Task.Run(async () =>
                 {
-                    bool isTcpOpen = await IsTcpPortOpenAsync(target, currentPort);
-                    bool isUdpOpen = await IsUdpPortOpenAsync(target, currentPort);
+                    var tcpState = await GetTcpStateAsync(target, currentPort);
+                    var udpState = await GetUdpStateAsync(target, currentPort);
 
                     return new PortScanResult
                     {
                         Port = currentPort,
-                        IsTcpOpen = isTcpOpen,
-                        IsUdpOpen = isUdpOpen
+                        IsTcpOpen = tcpState == PortState.Open,
+                        TcpFiltered = tcpState == PortState.Filtered,
+                        IsUdpOpen = udpState == PortState.Open,
+                        UdpFiltered = udpState == PortState.Filtered
                     };
                 });
             }
@@ -70,7 +78,7 @@ namespace EasyPortAnalyzer
             return results;
         }
 
-        private static async Task<bool> IsTcpPortOpenAsync(string host, int port)
+        private static async Task<PortState> GetTcpStateAsync(string host, int port)
         {
             try
             {
@@ -82,20 +90,25 @@ namespace EasyPortAnalyzer
                     var completedTask = await Task.WhenAny(connectTask, timeoutTask);
                     if (completedTask == timeoutTask)
                     {
-                        return false; // TCP port is closed (timeout)
+                        return PortState.Filtered; // Timeout likely means filtered or silently dropped
                     }
 
                     await connectTask; // Ensure any exceptions are observed
-                    return true; // TCP port is open
+                    return PortState.Open; // TCP port is open
                 }
+            }
+            catch (SocketException se)
+            {
+                // ConnectionRefused => closed; many other errors indicate filtered/unreachable
+                return se.SocketErrorCode == SocketError.ConnectionRefused ? PortState.Closed : PortState.Filtered;
             }
             catch
             {
-                return false; // TCP port is closed
+                return PortState.Filtered;
             }
         }
 
-        private static async Task<bool> IsUdpPortOpenAsync(string host, int port)
+        private static async Task<PortState> GetUdpStateAsync(string host, int port)
         {
             try
             {
@@ -106,23 +119,27 @@ namespace EasyPortAnalyzer
                     await udpClient.SendAsync(testBytes, testBytes.Length);
 
                     udpClient.Client.ReceiveTimeout = 1000; // 1-second timeout
-                    var remoteEndPoint = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0);
                     var receiveTask = udpClient.ReceiveAsync();
                     var timeoutTask = Task.Delay(1000); // 1-second timeout
 
                     var completedTask = await Task.WhenAny(receiveTask, timeoutTask);
                     if (completedTask == timeoutTask)
                     {
-                        return false; // UDP port is closed (timeout)
+                        return PortState.Filtered; // No response: could be open or filtered; mark as filtered
                     }
 
-                    await receiveTask; // Ensure any exceptions are observed
-                    return true; // UDP port is open
+                    await receiveTask; // Some response received
+                    return PortState.Open;
                 }
+            }
+            catch (SocketException se)
+            {
+                // On Windows, ICMP Port Unreachable maps to ConnectionReset
+                return se.SocketErrorCode == SocketError.ConnectionReset ? PortState.Closed : PortState.Filtered;
             }
             catch
             {
-                return false; // UDP port is closed
+                return PortState.Filtered;
             }
         }
     }
