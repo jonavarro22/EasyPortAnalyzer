@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using System.Linq;
+using System.Threading;
 
 namespace EasyPortAnalyzer
 {
@@ -13,214 +14,142 @@ namespace EasyPortAnalyzer
         const int PortFieldWidth = 3;
         const int TcpFieldWidth = 8;
         const int UdpFieldWidth = 8;
-        const int SpacePortTcp = 3;    // spaces between Port and TCP
-        const int SpaceTcpUdp = 1;     // spaces between TCP and UDP
-        const int SpaceUdpPort = 6; // spaces between UDP and Port in the table
+        const int SpacePortTcp = 3;
+        const int SpaceTcpUdp = 1;
+        const int SpaceUdpPort = 4;
+
         static async Task Main(string[] args)
         {
-            // Handle unhandled exceptions
             AppDomain.CurrentDomain.UnhandledException += UnhandledExceptionTrapper;
 
-            try
+            Console.WriteLine("Welcome to the Easy Port Analyzer!");
+            Console.WriteLine("Created by Joaquin Navarro for joaquinlab.com");
+            Console.WriteLine("Press Ctrl+C to exit at any time.\n");
+
+            while (keepRunning)
             {
-                Console.WriteLine("Welcome to the Easy Port Analyzer!");
-                Console.WriteLine("Created by Joaquin Navarro for joaquinlab.com");
-                Console.WriteLine("Press Ctrl+C to exit at any time.\n");
+                string target = await GetTargetIpAsync();
 
-                while (keepRunning)
+                int startPort = 0, endPort = 0;
+                List<int>? specificPorts = null;
+
+                if (File.Exists("Ports.txt") || File.Exists("Ports.csv"))
                 {
-                    keepRunning = true;
-
-                    string target = GetTargetIp();
-
-                    int startPort = 0, endPort = 0;
-                    List<int>? specificPorts = null;
-
-                    // Check if ports file exists and offer to read ports from it
-                    if (File.Exists("Ports.txt") || File.Exists("Ports.csv"))
+                    Console.WriteLine("A ports file (Ports.txt or Ports.csv) is available.");
+                    Console.Write("Do you want to read ports from the file? (y/n): ");
+                    if (Console.ReadLine()?.Trim().ToLower() == "y")
                     {
-                        Console.WriteLine("A ports file (Ports.txt or Ports.csv) is available.");
-                        Console.Write("Do you want to read ports from the file? (y/n): ");
-                        if (Console.ReadLine()?.Trim().ToLower() == "y")
+                        specificPorts = ReadPortsFromFile();
+                    }
+                }
+
+                if (specificPorts == null)
+                {
+                    int choice = DisplayMenu();
+                    switch (choice)
+                    {
+                        case 1: startPort = 0; endPort = 1023; break;
+                        case 2: startPort = 1024; endPort = 49151; break;
+                        case 3: startPort = 49152; endPort = 65535; break;
+                        case 4:
+                            startPort = GetPortInput("Enter starting port: ");
+                            endPort = GetPortInput("Enter ending port: ");
+                            break;
+                        case 5:
+                            Console.Write("Enter specific ports (comma-separated): ");
+                            var inputPorts = Console.ReadLine();
+                            if (!string.IsNullOrWhiteSpace(inputPorts))
+                            {
+                                specificPorts = inputPorts
+                                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                                    .Select(p => int.TryParse(p.Trim(), out int port) && port >= 0 && port <= 65535 ? port : -1)
+                                    .Where(p => p != -1)
+                                    .ToList();
+
+                                if (specificPorts.Count > 0)
+                                    SavePortsToFile(specificPorts);
+                            }
+                            break;
+                        case 6:
+                            Console.WriteLine("Warning: Scanning all ports (0-65535) might take a long time.");
+                            Console.Write("Do you want to proceed? (y/n): ");
+                            if (Console.ReadLine()?.Trim().ToLower() == "y")
+                            {
+                                startPort = 0; endPort = 65535;
+                            }
+                            else
+                            {
+                                Console.WriteLine("Operation cancelled.");
+                                continue;
+                            }
+                            break;
+                        default:
+                            Console.WriteLine("Invalid choice. Defaulting to Well-Known Ports.");
+                            startPort = 0; endPort = 1023;
+                            break;
+                    }
+                }
+
+                Console.WriteLine("\nScanning ports... (Press ESC to cancel)");
+
+                using var cts = new CancellationTokenSource();
+                var escListener = Task.Run(() =>
+                {
+                    while (!cts.IsCancellationRequested)
+                    {
+                        if (Console.KeyAvailable && Console.ReadKey(true).Key == ConsoleKey.Escape)
                         {
-                            specificPorts = ReadPortsFromFile();
+                            cts.Cancel();
+                            break;
                         }
                     }
+                });
 
-                    // If no specific ports were read from the file, display the menu
-                    if (specificPorts == null)
-                    {
-                        int choice = DisplayMenu();
-
-                        switch (choice)
-                        {
-                            case 1:
-                                startPort = 0;
-                                endPort = 1023;
-                                break;
-                            case 2:
-                                startPort = 1024;
-                                endPort = 49151;
-                                break;
-                            case 3:
-                                startPort = 49152;
-                                endPort = 65535;
-                                break;
-                            case 4:
-                                startPort = GetPortInput("Enter starting port: ");
-                                endPort = GetPortInput("Enter ending port: ");
-                                break;
-                            case 5:
-                                Console.Write("Enter specific ports (comma-separated): ");
-                                var inputPorts = Console.ReadLine();
-                                if (!string.IsNullOrWhiteSpace(inputPorts))
-                                {
-                                    specificPorts = inputPorts
-                                        .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                                        .Select(p => int.Parse(p.Trim()))
-                                        .ToList();
-
-                                    if (specificPorts.Count > 0)
-                                    {
-                                        SavePortsToFile(specificPorts); // Save specific ports to file
-                                    }
-                                }
-                                break;
-                            case 6:
-                                Console.WriteLine("Warning: Scanning all ports (0-65535) might take a long time.");
-                                Console.Write("Do you want to proceed? (y/n): ");
-                                if (Console.ReadLine()?.Trim().ToLower() == "y")
-                                {
-                                    startPort = 0;
-                                    endPort = 65535;
-                                }
-                                else
-                                {
-                                    Console.WriteLine("Operation cancelled.");
-                                    continue; // Return to the beginning of the loop instead of exiting
-                                }
-                                break;
-                            default:
-                                Console.WriteLine("Invalid choice. Defaulting to Well-Known Ports.");
-                                startPort = 0;
-                                endPort = 1023;
-                                break;
-                        }
-                    }
-
-                    Console.WriteLine("\nScanning ports...");
-                    List<PortScanResult> results;
+                List<PortScanResult> results;
+                try
+                {
                     if (specificPorts != null)
-                    {
-                        results = await PortScanner.ScanSpecificPortsAsync(target, specificPorts);
-                    }
+                        results = await PortScanner.ScanSpecificPortsAsync(target, specificPorts, timeoutMs: 1000, maxConcurrency: 200, cts.Token);
                     else
-                    {
-                        results = await PortScanner.ScanAsync(target, startPort, endPort);
-                    }
-
-                    // If no open ports were found, show a friendly prompt instead of an empty screen
-                    if (!results.Any(r => r.IsTcpOpen || r.IsUdpOpen))
-                    {
-                        if (HandleNoOpenPorts(target))
-                        {
-                            continue; // retry or change IP handled, restart loop
-                        }
-                        else
-                        {
-                            break; // user chose to exit
-                        }
-                    }
-
-                    PrintResults(results, target);
-
-                    if (keepRunning) // Only ask if user didn't press Escape
-                    {
-                        int option = DisplayScanOptionsMenu();
-
-                        switch (option)
-                        {
-                            case 1:
-                                // Continue with same IP (it's already stored in lastUsedIp)
-                                break;
-                            case 2:
-                                // Force new IP input by clearing lastUsedIp
-                                lastUsedIp = string.Empty;
-                                break;
-                            case 3:
-                                keepRunning = false;
-                                break;
-                        }
-                    }
+                        results = await PortScanner.ScanAsync(target, startPort, endPort, timeoutMs: 1000, maxConcurrency: 200, cts.Token);
                 }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"An error occurred: {ex.Message}");
+                catch (OperationCanceledException)
+                {
+                    Console.WriteLine("\nScan cancelled by user.");
+                    continue;
+                }
+
+                if (!results.Any(r => r.IsTcpOpen || r.IsUdpOpen))
+                {
+                    if (HandleNoOpenPorts(target))
+                        continue;
+                    else
+                        break;
+                }
+
+                PrintResults(results, target);
+
+                int option = DisplayScanOptionsMenu();
+                switch (option)
+                {
+                    case 1: break; // same IP
+                    case 2: lastUsedIp = string.Empty; break;
+                    case 3: keepRunning = false; break;
+                }
             }
         }
 
-        // New method for scan options menu with arrow key selection
-        static int DisplayScanOptionsMenu()
-        {
-            string[] options = {
-                "Scan again with same IP",
-                "Scan a different IP",
-                "Exit"
-            };
-
-            int selectedIndex = 0;
-
-            ConsoleKey key;
-            do
-            {
-                Console.Clear();
-                Console.WriteLine("Scan options:");
-
-                for (int i = 0; i < options.Length; i++)
-                {
-                    if (i == selectedIndex)
-                    {
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine($"> {options[i]}");
-                        Console.ResetColor();
-                    }
-                    else
-                    {
-                        Console.WriteLine($"  {options[i]}");
-                    }
-                }
-
-                key = Console.ReadKey(true).Key;
-
-                if (key == ConsoleKey.UpArrow)
-                {
-                    selectedIndex = (selectedIndex == 0) ? options.Length - 1 : selectedIndex - 1;
-                }
-                else if (key == ConsoleKey.DownArrow)
-                {
-                    selectedIndex = (selectedIndex == options.Length - 1) ? 0 : selectedIndex + 1;
-                }
-            } while (key != ConsoleKey.Enter);
-
-            return selectedIndex + 1;
-        }
-
-        static string GetTargetIp()
+        static async Task<string> GetTargetIpAsync()
         {
             while (true)
             {
                 if (!string.IsNullOrEmpty(lastUsedIp))
-                {
-                    
                     return lastUsedIp;
-                    
-                }
 
                 Console.Write("Enter target IP or hostname: ");
                 string? input = Console.ReadLine();
 
-                if (input is not null && IsValidIpOrHostname(input))
+                if (input is not null && await IsValidIpOrHostnameAsync(input))
                 {
                     lastUsedIp = input;
                     return lastUsedIp;
@@ -232,23 +161,14 @@ namespace EasyPortAnalyzer
             }
         }
 
-        static bool IsValidIpOrHostname(string input)
+        static async Task<bool> IsValidIpOrHostnameAsync(string input)
         {
-            if (string.IsNullOrWhiteSpace(input))
-            {
-                return false;
-            }
+            if (string.IsNullOrWhiteSpace(input)) return false;
+            if (IPAddress.TryParse(input, out _)) return true;
 
-            // Check if input is a valid IP address
-            if (IPAddress.TryParse(input, out _))
-            {
-                return true;
-            }
-
-            // Check if input is a valid hostname
             try
             {
-                var hostEntry = Dns.GetHostEntry(input);
+                var hostEntry = await Dns.GetHostEntryAsync(input);
                 return hostEntry != null;
             }
             catch
@@ -263,27 +183,26 @@ namespace EasyPortAnalyzer
             {
                 Console.Write(prompt);
                 if (int.TryParse(Console.ReadLine(), out int port) && port >= 0 && port <= 65535)
-                {
                     return port;
-                }
                 else
-                {
                     Console.WriteLine("Invalid port number. Please enter a number between 0 and 65535.");
-                }
             }
         }
 
-        // Read ports from file
         static List<int> ReadPortsFromFile()
         {
             string filePath = File.Exists("Ports.txt") ? "Ports.txt" : "Ports.csv";
-            string fileContent = File.ReadAllText(filePath);
-            return fileContent.Split(new[] { ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
-                              .Select(int.Parse)
-                              .ToList();
+            var ports = new List<int>();
+
+            foreach (var token in File.ReadAllText(filePath)
+                .Split(new[] { ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (int.TryParse(token.Trim(), out int port) && port >= 0 && port <= 65535)
+                    ports.Add(port);
+            }
+            return ports;
         }
 
-        // Save ports to file
         static void SavePortsToFile(List<int> ports)
         {
             try
@@ -315,6 +234,52 @@ namespace EasyPortAnalyzer
             {
                 Console.Clear();
                 Console.WriteLine("Select port range to scan:");
+                for (int i = 0; i < options.Length; i++)
+                {
+                    if (i == selectedIndex)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"> {options[i]}");
+                        Console.ResetColor();
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  {options[i]}");
+                    }
+                }
+
+                key = Console.ReadKey(true).Key;
+
+                if (key == ConsoleKey.UpArrow)
+                {
+                    selectedIndex = (selectedIndex == 0) ? options.Length - 1 : selectedIndex - 1;
+                }
+                else if (key == ConsoleKey.DownArrow)
+                {
+                    selectedIndex = (selectedIndex == options.Length - 1) ? 0 : selectedIndex + 1;
+                }
+            } while (key != ConsoleKey.Enter);
+
+            return selectedIndex + 1;
+        }
+
+        // New method for scan options menu with arrow key selection
+        static int DisplayScanOptionsMenu()
+        {
+            string[] options = {
+                "Scan again with same IP",
+                "Scan a different IP",
+                "Exit"
+            };
+
+            int selectedIndex = 0;
+
+            ConsoleKey key;
+            do
+            {
+                Console.Clear();
+                Console.WriteLine("Scan options:");
+
                 for (int i = 0; i < options.Length; i++)
                 {
                     if (i == selectedIndex)
@@ -410,33 +375,49 @@ namespace EasyPortAnalyzer
         static void PrintResults(List<PortScanResult> results, string ip)
         {
             int currentLine = 0; // top visible row index
-            int maxRows = (Console.WindowHeight - 8); // Maximum rows visible per column
+            int maxRows = (Console.WindowHeight - 6); // more space for results
             int totalVisibleCapacity = maxRows * 3;
 
-            // Smart toggle - show all results by default unless there are too many to display on one screen
+            // Show all ports unless too many to fit
             bool showAll = results.Count <= totalVisibleCapacity;
 
             while (true)
             {
                 Console.Clear();
-                string viewMode = showAll ? "all ports" : "open ports only";
-                Console.WriteLine($"\nCurrently showing: {viewMode}");
-                Console.WriteLine("Use Up/Down arrows to scroll line by line, Left/Right arrows to scroll page by page");
-                Console.WriteLine("Space to toggle view, Enter to go back to the menu, Esc to exit, S to save results");
 
-                // If any filtered results exist, show a quick explanation before the table
+                // Compact header
+                string viewMode = showAll ? "all ports" : "open ports only";
+                Console.WriteLine($"[{ip}]");
+                Console.WriteLine("Showing: {viewMode} | Scroll using arrows | Space toggle | S to save | Esc to exit");
+
+                // Compact legend
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.Write("Open");
+                Console.ResetColor();
+                Console.Write("=Green  ");
+
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.Write("Filtered");
+                Console.ResetColor();
+                Console.Write("=Yellow  ");
+
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Write("Closed");
+                Console.ResetColor();
+                Console.Write("=Red");
+
+                // Short filtered note only if needed
                 if (showAll && results.Any(r => r.TcpFiltered || r.UdpFiltered))
                 {
                     Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine("Note: 'Filtered' means the port didn't respond (timeout). A firewall may be silently blocking traffic, so the port can't be confirmed open or closed.");
+                    Console.Write(" Note: Filtered = no response (possible firewall)");
                     Console.ResetColor();
                 }
 
-                PrintTableHeader(ip);
+                Console.WriteLine("");
 
                 var filteredResults = showAll ? results : results.FindAll(r => r.IsTcpOpen || r.IsUdpOpen);
 
-                // If current view has no results (e.g., open-only but none visible), offer to toggle or exit
                 if (filteredResults.Count == 0)
                 {
                     Console.WriteLine("\nNo results to display in this view.");
@@ -463,43 +444,46 @@ namespace EasyPortAnalyzer
                     {
                         ExportResultsToCsv(results, ip);
                     }
-
                     continue;
                 }
 
-                // Relative positions inside a column
+                // Column layout
                 int relPortX = 0;
                 int relTcpX = relPortX + PortFieldWidth + SpacePortTcp;
                 int relUdpX = relTcpX + TcpFieldWidth + SpaceTcpUdp;
 
-                // Column layout using cursor positioning, with tight minimal width
                 int minColumnWidth = relUdpX + UdpFieldWidth;
-                int colWidth = minColumnWidth; // keep columns tight (avoid large empty space)
+                int colWidth = minColumnWidth;
                 int col1X = 0;
-                int col2X = Math.Min(Console.BufferWidth - 1, col1X + colWidth + SpaceTcpUdp);
+                int col2X = Math.Min(Console.BufferWidth - 1, col1X + colWidth + SpaceUdpPort);
                 int col3X = Math.Min(Console.BufferWidth - 1, col2X + colWidth + SpaceUdpPort);
 
-                // Draw column headers aligned to the same relative positions as values
-                int headerTop = Math.Min(Console.CursorTop, Math.Max(0, Console.BufferHeight - 1));
-                Console.SetCursorPosition(Math.Min(col1X + relPortX, Console.BufferWidth - 1), headerTop);
+                // Column headers
+                Console.SetCursorPosition(col1X + relPortX, Console.CursorTop);
                 Console.Write("Port");
-                Console.SetCursorPosition(Math.Min(col1X + relTcpX, Console.BufferWidth - 1), headerTop);
+                Console.SetCursorPosition(col1X + relTcpX, Console.CursorTop);
                 Console.Write("TCP");
-                Console.SetCursorPosition(Math.Min(col1X + relUdpX, Console.BufferWidth - 1), headerTop);
+                Console.SetCursorPosition(col1X + relUdpX, Console.CursorTop);
                 Console.Write("UDP");
 
-                Console.SetCursorPosition(Math.Min(col2X + relPortX, Console.BufferWidth - 1), headerTop);
+                Console.SetCursorPosition(col2X + relPortX - 2, Console.CursorTop);
+                Console.Write("|");
+
+                Console.SetCursorPosition(col2X + relPortX, Console.CursorTop);
                 Console.Write("Port");
-                Console.SetCursorPosition(Math.Min(col2X + relTcpX, Console.BufferWidth - 1), headerTop);
+                Console.SetCursorPosition(col2X + relTcpX, Console.CursorTop);
                 Console.Write("TCP");
-                Console.SetCursorPosition(Math.Min(col2X + relUdpX, Console.BufferWidth - 1), headerTop);
+                Console.SetCursorPosition(col2X + relUdpX, Console.CursorTop);
                 Console.Write("UDP");
 
-                Console.SetCursorPosition(Math.Min(col3X + relPortX, Console.BufferWidth - 1), headerTop);
+                Console.SetCursorPosition(col3X + relPortX - 2, Console.CursorTop);
+                Console.Write("|");
+
+                Console.SetCursorPosition(col3X + relPortX, Console.CursorTop);
                 Console.Write("Port");
-                Console.SetCursorPosition(Math.Min(col3X + relTcpX, Console.BufferWidth - 1), headerTop);
+                Console.SetCursorPosition(col3X + relTcpX, Console.CursorTop);
                 Console.Write("TCP");
-                Console.SetCursorPosition(Math.Min(col3X + relUdpX, Console.BufferWidth - 1), headerTop);
+                Console.SetCursorPosition(col3X + relUdpX, Console.CursorTop);
                 Console.Write("UDP");
 
                 Console.WriteLine();
@@ -507,23 +491,9 @@ namespace EasyPortAnalyzer
                 Console.WriteLine(new string('-', Math.Max(0, clearLen)));
 
                 int bodyTop = Console.CursorTop;
-
-                // Compute how many total rows are needed for the 3-column layout
                 int totalRows = (int)Math.Ceiling(filteredResults.Count / 3.0);
                 int visibleRows = Math.Min(maxRows, Math.Max(0, totalRows - currentLine));
 
-                // Ensure buffer height can accommodate what we'll print (Windows only)
-                int neededHeight = bodyTop + visibleRows + 1; // +1 for safety
-                if (OperatingSystem.IsWindows() && neededHeight > Console.BufferHeight)
-                {
-                    try
-                    {
-                        Console.SetBufferSize(Console.BufferWidth, Math.Max(Console.WindowHeight, neededHeight));
-                    }
-                    catch { /* ignore if not supported */ }
-                }
-
-                // Clamp visibleRows to buffer height to avoid SetCursorPosition errors
                 int maxRowsByBuffer = Math.Max(0, Console.BufferHeight - bodyTop - 1);
                 visibleRows = Math.Min(visibleRows, maxRowsByBuffer);
 
@@ -537,22 +507,24 @@ namespace EasyPortAnalyzer
                     int targetY = bodyTop + i;
                     if (targetY < 0 || targetY >= Console.BufferHeight) break;
 
-                    // Clear the entire line area before writing cells
                     Console.SetCursorPosition(0, targetY);
                     Console.Write(new string(' ', Math.Max(0, clearLen)));
 
                     if (index1 < filteredResults.Count)
-                    {
                         PrintCellAt(filteredResults[index1], col1X + relPortX, col1X + relTcpX, col1X + relUdpX, targetY);
-                    }
                     if (index2 < filteredResults.Count)
                     {
+                        Console.SetCursorPosition(col2X + relPortX - 2, Console.CursorTop);
+                        Console.Write("|");
                         PrintCellAt(filteredResults[index2], col2X + relPortX, col2X + relTcpX, col2X + relUdpX, targetY);
                     }
+                        
                     if (index3 < filteredResults.Count)
                     {
+                        Console.SetCursorPosition(col3X + relPortX - 2, Console.CursorTop);
+                        Console.Write("|");
                         PrintCellAt(filteredResults[index3], col3X + relPortX, col3X + relTcpX, col3X + relUdpX, targetY);
-                    }
+                    }        
                 }
 
                 var key = Console.ReadKey(true).Key;
@@ -575,7 +547,7 @@ namespace EasyPortAnalyzer
                 else if (key == ConsoleKey.Spacebar)
                 {
                     showAll = !showAll;
-                    currentLine = 0; // Reset to the top of the list
+                    currentLine = 0;
                 }
                 else if (key == ConsoleKey.Enter)
                 {

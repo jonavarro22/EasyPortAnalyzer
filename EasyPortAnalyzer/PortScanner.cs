@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace EasyPortAnalyzer
@@ -18,89 +20,106 @@ namespace EasyPortAnalyzer
     {
         private enum PortState { Open, Closed, Filtered }
 
-        public static async Task<List<PortScanResult>> ScanAsync(string target, int startPort, int endPort)
+        public static async Task<List<PortScanResult>> ScanAsync(
+            string target,
+            int startPort,
+            int endPort,
+            int timeoutMs = 1000,
+            int maxConcurrency = 200,
+            CancellationToken token = default)
         {
-            var results = new List<PortScanResult>();
-            var tasks = new Task<PortScanResult>[endPort - startPort + 1];
-
-            for (int port = startPort; port <= endPort; port++)
-            {
-                int currentPort = port;
-                tasks[currentPort - startPort] = Task.Run(async () =>
-                {
-                    var tcpState = await GetTcpStateAsync(target, currentPort);
-                    var udpState = await GetUdpStateAsync(target, currentPort);
-
-                    return new PortScanResult
-                    {
-                        Port = currentPort,
-                        IsTcpOpen = tcpState == PortState.Open,
-                        TcpFiltered = tcpState == PortState.Filtered,
-                        IsUdpOpen = udpState == PortState.Open,
-                        UdpFiltered = udpState == PortState.Filtered
-                    };
-                });
-            }
-
-            var scanResults = await Task.WhenAll(tasks);
-            results.AddRange(scanResults);
-
-            return results;
+            var ports = Enumerable.Range(startPort, endPort - startPort + 1);
+            return await ScanPortsAsync(target, ports, timeoutMs, maxConcurrency, token);
         }
 
-        public static async Task<List<PortScanResult>> ScanSpecificPortsAsync(string target, List<int> ports)
+        public static async Task<List<PortScanResult>> ScanSpecificPortsAsync(
+            string target,
+            List<int> ports,
+            int timeoutMs = 1000,
+            int maxConcurrency = 200,
+            CancellationToken token = default)
         {
-            var results = new List<PortScanResult>();
-            var tasks = new Task<PortScanResult>[ports.Count];
-
-            for (int i = 0; i < ports.Count; i++)
-            {
-                int currentPort = ports[i];
-                tasks[i] = Task.Run(async () =>
-                {
-                    var tcpState = await GetTcpStateAsync(target, currentPort);
-                    var udpState = await GetUdpStateAsync(target, currentPort);
-
-                    return new PortScanResult
-                    {
-                        Port = currentPort,
-                        IsTcpOpen = tcpState == PortState.Open,
-                        TcpFiltered = tcpState == PortState.Filtered,
-                        IsUdpOpen = udpState == PortState.Open,
-                        UdpFiltered = udpState == PortState.Filtered
-                    };
-                });
-            }
-
-            var scanResults = await Task.WhenAll(tasks);
-            results.AddRange(scanResults);
-
-            return results;
+            return await ScanPortsAsync(target, ports, timeoutMs, maxConcurrency, token);
         }
 
-        private static async Task<PortState> GetTcpStateAsync(string host, int port)
+        private static async Task<List<PortScanResult>> ScanPortsAsync(
+            string target,
+            IEnumerable<int> ports,
+            int timeoutMs,
+            int maxConcurrency,
+            CancellationToken token)
+        {
+            var results = new List<PortScanResult>();
+            var semaphore = new SemaphoreSlim(maxConcurrency);
+            var tasks = new List<Task>();
+
+            foreach (var port in ports)
+            {
+                token.ThrowIfCancellationRequested();
+                await semaphore.WaitAsync(token);
+
+                tasks.Add(Task.Run(async () =>
+                {
+                    try
+                    {
+                        var tcpState = await GetTcpStateAsync(target, port, timeoutMs, token);
+                        var udpState = await GetUdpStateAsync(target, port, timeoutMs, token);
+
+                        lock (results)
+                        {
+                            results.Add(new PortScanResult
+                            {
+                                Port = port,
+                                IsTcpOpen = tcpState == PortState.Open,
+                                TcpFiltered = tcpState == PortState.Filtered,
+                                IsUdpOpen = udpState == PortState.Open,
+                                UdpFiltered = udpState == PortState.Filtered
+                            });
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Ignore, scan was cancelled
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }, token));
+            }
+
+            await Task.WhenAll(tasks);
+            return results.OrderBy(r => r.Port).ToList();
+        }
+
+        private static async Task<PortState> GetTcpStateAsync(
+            string host,
+            int port,
+            int timeoutMs,
+            CancellationToken token)
         {
             try
             {
-                using (var client = new TcpClient())
-                {
-                    var connectTask = client.ConnectAsync(host, port);
-                    var timeoutTask = Task.Delay(1000); // 1-second timeout
+                using var client = new TcpClient();
+                var connectTask = client.ConnectAsync(host, port);
+                var timeoutTask = Task.Delay(timeoutMs, token);
 
-                    var completedTask = await Task.WhenAny(connectTask, timeoutTask);
-                    if (completedTask == timeoutTask)
-                    {
-                        return PortState.Filtered; // Timeout likely means filtered or silently dropped
-                    }
+                var completedTask = await Task.WhenAny(connectTask, timeoutTask);
+                if (completedTask == timeoutTask)
+                    return PortState.Filtered;
 
-                    await connectTask; // Ensure any exceptions are observed
-                    return PortState.Open; // TCP port is open
-                }
+                await connectTask; // Ensure exceptions are observed
+                return PortState.Open;
             }
             catch (SocketException se)
             {
-                // ConnectionRefused => closed; many other errors indicate filtered/unreachable
-                return se.SocketErrorCode == SocketError.ConnectionRefused ? PortState.Closed : PortState.Filtered;
+                return se.SocketErrorCode == SocketError.ConnectionRefused
+                    ? PortState.Closed
+                    : PortState.Filtered;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch
             {
@@ -108,34 +127,39 @@ namespace EasyPortAnalyzer
             }
         }
 
-        private static async Task<PortState> GetUdpStateAsync(string host, int port)
+        private static async Task<PortState> GetUdpStateAsync(
+            string host,
+            int port,
+            int timeoutMs,
+            CancellationToken token)
         {
             try
             {
-                using (var udpClient = new UdpClient())
-                {
-                    udpClient.Connect(host, port);
-                    byte[] testBytes = System.Text.Encoding.ASCII.GetBytes("test");
-                    await udpClient.SendAsync(testBytes, testBytes.Length);
+                using var udpClient = new UdpClient();
+                udpClient.Connect(host, port);
 
-                    udpClient.Client.ReceiveTimeout = 1000; // 1-second timeout
-                    var receiveTask = udpClient.ReceiveAsync();
-                    var timeoutTask = Task.Delay(1000); // 1-second timeout
+                byte[] testBytes = System.Text.Encoding.ASCII.GetBytes("test");
+                await udpClient.SendAsync(testBytes, testBytes.Length);
 
-                    var completedTask = await Task.WhenAny(receiveTask, timeoutTask);
-                    if (completedTask == timeoutTask)
-                    {
-                        return PortState.Filtered; // No response: could be open or filtered; mark as filtered
-                    }
+                var receiveTask = udpClient.ReceiveAsync();
+                var timeoutTask = Task.Delay(timeoutMs, token);
 
-                    await receiveTask; // Some response received
-                    return PortState.Open;
-                }
+                var completedTask = await Task.WhenAny(receiveTask, timeoutTask);
+                if (completedTask == timeoutTask)
+                    return PortState.Filtered;
+
+                await receiveTask; // Response received
+                return PortState.Open;
             }
             catch (SocketException se)
             {
-                // On Windows, ICMP Port Unreachable maps to ConnectionReset
-                return se.SocketErrorCode == SocketError.ConnectionReset ? PortState.Closed : PortState.Filtered;
+                return se.SocketErrorCode == SocketError.ConnectionReset
+                    ? PortState.Closed
+                    : PortState.Filtered;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch
             {
